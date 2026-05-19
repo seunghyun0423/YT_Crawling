@@ -2,5 +2,5 @@ streamlit
 pandas
 google-api-python-client
 youtube-transcript-api
-wordcloud
-matplotlib
+youtube-transcript-api
+konlpy
