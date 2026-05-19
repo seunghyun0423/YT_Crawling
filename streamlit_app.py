@@ -11,8 +11,7 @@ import streamlit as st
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
+from konlpy.tag import Okt
 
 
 # -----------------------------
@@ -59,13 +58,17 @@ STOPWORDS = [
     "그리고", "제품", "사용", "영상", "오늘", "이번", "소개",
     "제가", "저는", "너무", "정말", "그냥", "하면", "해서",
     "있는", "없는", "같아요", "합니다", "있습니다", "여러분",
-    "후쿠오카", "도쿄", "오사카", "나고야", "삿포로", "추천템", 
-    "일본여행", "쇼핑리스트", "아이", "무조건", "브랜드", 
-    "감사합니다", "많이", "언니", "이거", "저도", "한국",
-    "보고", "근데", "저거", "항상", "정보", "혹시", "드럭스토어",
-    "리스트", "완전", "이런", "맛있어요", "오늘도", "브이"
-    "정도", "사람", "생각", "느낌", "부분", "때문",
-    "하나", "요즘", "계속", "댓글", "구독", "좋아요
+    "후쿠오카", "도쿄", "오사카", "추천템", "드럭스토어",
+    "일본여행", "쇼핑리스트",
+    "감사", "감사합니다", "많이", "언니", "이거", "저거", "저도",
+    "한국", "보고", "근데", "항상", "정보", "혹시", "완전",
+    "이런", "맛있어요", "오늘도", "정도", "사람", "생각",
+    "느낌", "부분", "때문", "하나", "요즘", "계속", "댓글",
+    "구독", "채널", "링크", "아래", "여기", "다음", "처음",
+    "마지막", "확인", "가능", "필수", "정리", "관련", "문의",
+    "최고", "최애", "역시", "대박", "약간", "살짝", "조금",
+    "매우", "가장", "제일", "거의", "모두", "뭔가", "경우",
+    "이유", "방법", "사용법"
 ]
 
 ORDER_OPTIONS = {
@@ -195,13 +198,19 @@ def clean_text(text):
     return text.strip()
 
 
-def build_candidate_df(df, stopwords=None):
-    stopwords = stopwords or STOPWORDS
-    all_text = " ".join(df["clean_text"].fillna(""))
-    words = all_text.split()
+@st.cache_resource(show_spinner=False)
+def get_okt():
+    return Okt()
 
-    candidate_words = [
-        w for w in words
+
+def extract_nouns_for_analysis(text, stopwords=None):
+    stopwords = stopwords or STOPWORDS
+    okt = get_okt()
+
+    nouns = okt.nouns(str(text))
+
+    filtered = [
+        w for w in nouns
         if (
             len(w) >= 2
             and w not in stopwords
@@ -212,8 +221,25 @@ def build_candidate_df(df, stopwords=None):
         )
     ]
 
+    return filtered
+
+
+def build_candidate_df(df, stopwords=None):
+    stopwords = stopwords or STOPWORDS
+
+    if df.empty or "clean_text" not in df.columns:
+        return pd.DataFrame(columns=["keyword", "count"])
+
+    all_text = " ".join(df["clean_text"].fillna("").astype(str))
+    candidate_words = extract_nouns_for_analysis(all_text, stopwords)
+
     word_rank = Counter(candidate_words).most_common()
-    return pd.DataFrame(word_rank, columns=["keyword", "count"])
+    candidate_df = pd.DataFrame(word_rank, columns=["keyword", "count"])
+
+    if not candidate_df.empty:
+        candidate_df = candidate_df[candidate_df["count"] >= 2].reset_index(drop=True)
+
+    return candidate_df
 
 
 def enrich_text_columns(df):
@@ -290,34 +316,6 @@ def build_product_rank(df, products):
     product_rank.insert(0, "rank", product_rank.index + 1)
 
     return mention_df, product_rank
-
-
-def make_wordcloud(candidate_df):
-    if candidate_df.empty:
-        return None
-
-    word_freq = dict(zip(candidate_df["keyword"], candidate_df["count"]))
-    font_candidates = [
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "C:/Windows/Fonts/malgun.ttf",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
-    ]
-    font_path = next((p for p in font_candidates if os.path.exists(p)), None)
-
-    wc = WordCloud(
-        font_path=font_path,
-        width=1200,
-        height=700,
-        background_color="white",
-        max_words=200,
-        collocations=False,
-    ).generate_from_frequencies(word_freq)
-
-    fig, ax = plt.subplots(figsize=(12, 7))
-    ax.imshow(wc, interpolation="bilinear")
-    ax.axis("off")
-    return fig
 
 
 def to_csv_download(df):
@@ -529,11 +527,6 @@ if page == "YouTube 키워드 분석":
             file_name="candidate_df.csv",
             mime="text/csv",
         )
-
-        st.subheader("워드 클라우드")
-        fig = make_wordcloud(candidate_df.head(top_n))
-        if fig:
-            st.pyplot(fig, clear_figure=True)
 
 
 # -----------------------------
